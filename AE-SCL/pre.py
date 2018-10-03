@@ -131,7 +131,7 @@ def preproc(pivot_num,pivot_min_st,src,dest):
             names.append(name)
             pivotsCounts.append(bigram_vectorizer_unlabeled.get_feature_names().index(name))
             c+=1
-            print "feature is ",name," it MI is ",RMI[MIsorted[i]]," in source ",s_count," in target ",t_count
+            print("feature is ",name," it MI is ",RMI[MIsorted[i]]," in source ",s_count," in target ",t_count)
         i+=1
 
 

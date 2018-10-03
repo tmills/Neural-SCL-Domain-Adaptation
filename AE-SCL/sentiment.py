@@ -160,7 +160,7 @@ def sent(src,dest,pivot_num,pivot_min_st,dim,c_parm):
 
     sentence = "pivot num = " + str(pivot_num) + " , min freq = " + str(pivot_min_st) + " dim = " + str(
         dim) + " result = " + str(lg) + " c_parm = " + str(c_parm)
-    print sentence
+    print(sentence)
 
     with open(filename, "a") as myfile:
         myfile.write(sentence+"\n")
