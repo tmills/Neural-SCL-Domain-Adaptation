@@ -136,8 +136,8 @@ def preproc(pivot_num,pivot_min_st,src,dest):
 
 
     #takes out fifth of the training data for validation(with respect to the represantation learning task)
-    source_valid = len(source)/5
-    target_valod = len(target)/5
+    source_valid = len(source)//5
+    target_valod = len(target)//5
     c=0
     y = X_2_train_unlabeled[:,pivotsCounts]
     x =np.delete(X_2_train_unlabeled, pivotsCounts, 1)  # delete second column of C
