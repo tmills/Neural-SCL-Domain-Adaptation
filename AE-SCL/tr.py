@@ -25,7 +25,7 @@ def train(src,dest,pivot_num,pivot_min_st,dim):
     model.add(Activation('sigmoid'))
     model.add(Dense(outputs))
     model.add(Activation('sigmoid'))
-    print model.summary()
+    print(model.summary())
     sgd = SGD(lr=0.1, decay=1e-5, momentum=0.9)
 
     model.compile(optimizer=sgd, loss='binary_crossentropy')
@@ -36,7 +36,7 @@ def train(src,dest,pivot_num,pivot_min_st,dim):
     save_best = ModelCheckpoint("best_model", monitor='val_loss', verbose=0, save_best_only=True, mode='auto')
 
     h=model.fit(x, y, batch_size=1,callbacks=[earlyStopping,save_best],epochs=10,validation_data=(x_valid,y_valid), shuffle=True)
-    print (h.history['val_loss'])[-1]
+    print( (h.history['val_loss'])[-1])
     weight_str = src + "_to_" + dest + "/weights/w_"+src+"_"+dest+"_"+str(pivot_num)+"_"+str(pivot_min_st)+"_"+str(HUs)
     filename = weight_str
     if not os.path.exists(os.path.dirname(filename)):
