@@ -131,13 +131,13 @@ def preproc(pivot_num,pivot_min_st,src,dest):
             names.append(name)
             pivotsCounts.append(bigram_vectorizer_unlabeled.get_feature_names().index(name))
             c+=1
-            print "feature is ",name," it MI is ",RMI[MIsorted[i]]," in source ",s_count," in target ",t_count
+            print("feature is ",name," it MI is ",RMI[MIsorted[i]]," in source ",s_count," in target ",t_count)
         i+=1
 
 
     #takes out fifth of the training data for validation(with respect to the represantation learning task)
-    source_valid = len(source)/5
-    target_valod = len(target)/5
+    source_valid = len(source)//5
+    target_valod = len(target)//5
     c=0
     y = X_2_train_unlabeled[:,pivotsCounts]
     x =np.delete(X_2_train_unlabeled, pivotsCounts, 1)  # delete second column of C

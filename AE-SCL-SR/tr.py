@@ -32,7 +32,7 @@ def train(src,dest,pivot_num,pivot_min_st,dim):
     model.add(Activation('sigmoid'))
     model.add(frozen_layer)
     model.add(Activation('sigmoid'))
-    print model.summary()
+    print(model.summary())
     w=model.get_weights()
     #initialzing the decoder with the pivot embeddings
     w[2] =  mat.transpose()
