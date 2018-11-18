@@ -31,13 +31,13 @@ def XML2arrayRAW(neg_path, pos_path):
 
     return reviews,negReviews,posReviews
 
-def GetTopNMI(n,CountVectorizer,X,target):
+def GetTopNMI(n,CountVectorizer,X,labels):
     MI = []
     length = X.shape[1]
 
 
     for i in range(length):
-        temp=mutual_info_score(X[:, i], target)
+        temp=mutual_info_score(X[:, i], labels)
         MI.append(temp)
     MIs = sorted(range(len(MI)), key=lambda i: MI[i])[-n:]
     return MIs,MI
@@ -49,13 +49,13 @@ def getCounts(X,i):
 
 def extract_and_split(neg_path, pos_path):
     reviews,n,p = XML2arrayRAW(neg_path, pos_path)
-    #train, train_target, test, test_target = split_data_balanced(reviews,1000,200)
+    #train, train_labels, test, test_labels = split_data_balanced(reviews,1000,200)
     train=reviews
-    train_target=[]
+    train_labels=[]
     test = []
-    test_target=[]
-    train_target = [0]*1000+[1]*1000
-    return train, train_target, test, test_target
+    test_labels=[]
+    train_labels = [0]*1000+[1]*1000
+    return train, train_labels, test, test_labels
 
 
 
@@ -73,16 +73,16 @@ def sent(src,dest,pivot_num,pivot_min_st,dim,c_parm):
     filename = src + "_to_" + dest + "/split/"
     if not os.path.exists(os.path.dirname(filename)):
         #gets all the train and test for sentiment classification
-        train, train_target, test, test_target = extract_and_split("data/"+src+"/negative.parsed","data/"+src+"/positive.parsed")
+        train, train_labels, test, test_labels = extract_and_split("data/"+src+"/negative.parsed","data/"+src+"/positive.parsed")
     else:
         with open(src + "_to_" + dest + "/split/train", 'rb') as f:
             train = pickle.load(f)
         with open(src + "_to_" + dest + "/split/test", 'rb') as f:
             test = pickle.load(f)
-        with open(src + "_to_" + dest + "/split/train_target", 'rb') as f:
-            train_target = pickle.load(f)
-        with open(src + "_to_" + dest + "/split/test_target", 'rb') as f:
-            test_target = pickle.load(f)
+        with open(src + "_to_" + dest + "/split/train_labels", 'rb') as f:
+            train_labels = pickle.load(f)
+        with open(src + "_to_" + dest + "/split/test_labels", 'rb') as f:
+            test_labels = pickle.load(f)
 
     unlabeled, source, target = XML2arrayRAW("data/" + src + "/" + src + "UN.txt","data/" + dest + "/" + dest + "UN.txt")
     #we add the train to the unlabeled list in order to get good vectorizer
@@ -123,7 +123,7 @@ def sent(src,dest,pivot_num,pivot_min_st,dim,c_parm):
 
     lbl_num = 1000
     dest_test, source, target = XML2arrayRAW("data/"+dest+"/negative.parsed","data/"+dest+"/positive.parsed")
-    dest_test_target= [0]*lbl_num+[1]*lbl_num
+    dest_test_labels= [0]*lbl_num+[1]*lbl_num
     X_dest = bigram_vectorizer.transform(dest_test).toarray()
     X_2_test = bigram_vectorizer_unlabeled.transform(dest_test).toarray()
     XforREP_dest = np.delete(X_2_test, pivotsCounts, 1)  # delete second column of C
@@ -133,26 +133,26 @@ def sent(src,dest,pivot_num,pivot_min_st,dim,c_parm):
 
 
     logreg = LogisticRegression(C=c_parm)
-    logreg.fit(X_2_train, train_target)
-    lgs = logreg.score(X_dest, dest_test_target)
-    log_dev_source = logreg.score(X_dev_test, test_target)
+    logreg.fit(X_2_train, train_labels)
+    lgs = logreg.score(X_dest, dest_test_labels)
+    log_dev_source = logreg.score(X_dev_test, test_labels)
 
 
 
     logreg =  LogisticRegression(C=c_parm)
 
-    logreg.fit(allfeatures, train_target)
+    logreg.fit(allfeatures, train_labels)
 
-    lg = logreg.score(allfeaturesFinal, dest_test_target)
-    log_dev_all = logreg.score(devAllFeatures,test_target)
+    lg = logreg.score(allfeaturesFinal, dest_test_labels)
+    log_dev_all = logreg.score(devAllFeatures,test_labels)
 
 
 
     logregR =  LogisticRegression(C=c_parm)
 
-    logregR.fit(rep, train_target)
-    log_dev_rep = logregR.score(XforREP_dev,test_target)
-    lgR = logregR.score(rep_for_dest, dest_test_target)
+    logregR.fit(rep, train_labels)
+    log_dev_rep = logregR.score(XforREP_dev,test_labels)
+    lgR = logregR.score(rep_for_dest, dest_test_labels)
 
     filename = src+"_to_"+dest+"/"+"results/"+src+"_to_"+dest
     if not os.path.exists(os.path.dirname(filename)):

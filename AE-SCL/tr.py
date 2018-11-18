@@ -8,16 +8,17 @@ import os
 import numpy as np
 from numpy.random import seed
 from keras.models import load_model
+import gc
 seed(1)
 
 
 
 
-def train(src,dest,pivot_num,pivot_min_st,dim):
+def train(src,dest,pivot_num,pivot_min_st,dim,pivot_method='mi', pivots=None):
     outputs = pivot_num
     HUs =dim
     #get the representation learning training and vlidation data
-    x, y, x_valid, y_valid,inputs= pre.preproc(pivot_num,pivot_min_st,src,dest)
+    x, y, x_valid, y_valid,inputs= pre.preproc(pivot_num,pivot_min_st,src,dest,pivot_method=pivot_method,pivots=pivots)
 
     model = Sequential()
     model.add(Dense(HUs,kernel_initializer='glorot_normal', input_shape=(inputs,)))
@@ -44,4 +45,5 @@ def train(src,dest,pivot_num,pivot_min_st,dim):
     #saving the entire model
     model = load_model("best_model")
     np.save(weight_str, model.get_weights())
-
+    del model
+    gc.collect()
