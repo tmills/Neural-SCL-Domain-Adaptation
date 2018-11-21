@@ -123,8 +123,7 @@ def preproc(pivot_num,pivot_min_st,src,dest, pivot_method='mi', pivots=None):
     bigram_vectorizer_source = CountVectorizer(ngram_range=(1, 2), token_pattern=r'\b\w+\b', min_df=src_count, binary=True)
     X_2_train_source = bigram_vectorizer_source .fit_transform(source).toarray()
    
-    # target is the unlabeled data from the target domain (i.e. this preproc does not make use of the set of target
-    # data for which there is labels, even by ignoring the labels
+    # target is the unlabeled data from the target domain (i.e. this preproc does not make use of the set of target data for which there is labels, even by ignoring the labels
     bigram_vectorizer_target = CountVectorizer(ngram_range=(1, 2), token_pattern=r'\b\w+\b', min_df=20, binary=True)
     X_2_train_target = bigram_vectorizer_target.fit_transform(target).toarray()
 
@@ -146,7 +145,7 @@ def preproc(pivot_num,pivot_min_st,src,dest, pivot_method='mi', pivots=None):
     for ind in dom_spec_feat_inds:
         dom_spec_feat_names.append( bigram_vectorizer_unlabeled.get_feature_names()[ind] )
     
-    if pivot_method == 'mi':
+    if pivot_method == 'mi' or pivot_method == 'mi-domfilter':
         MIsorted.reverse()
         pivots = MIsorted
     elif pivot_method == 'random':
@@ -188,7 +187,7 @@ def preproc(pivot_num,pivot_min_st,src,dest, pivot_method='mi', pivots=None):
         t_count = getCounts(X_2_train_target, bigram_vectorizer_target.get_feature_names().index(name)) if name in bigram_vectorizer_target.get_feature_names() else 0
         #pivot must meet 2 conditions, to have high MI with the label and appear at least pivot_min_st times in the source and target domains
         if(s_count>=pivot_min_st and t_count>=pivot_min_st):
-            if pivot_method == 'mi' and name in dom_spec_feat_names:
+            if pivot_method == 'mi-domfilter' and name in dom_spec_feat_names:
                 print("Ignoring feature %s because it has high MI with the domain" % (name) )
             else:
                 names.append(name)
