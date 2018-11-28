@@ -164,7 +164,7 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
                 if sub_batch_size <= 0:
                     print('Found an edge case where sub_batch_size<=0 with un_batch_size=%d' % (un_batch_size))
                     break
-                if sub_batch_size < max_batch_size:
+                #if sub_batch_size < max_batch_size:
                     #print('Batch %d has size %d' % (sub_batch, sub_batch_size))
 
                 sub_batch_unlabeled_X = torch.FloatTensor(unlabeled_X[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size, :]).to(device)
