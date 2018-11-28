@@ -60,24 +60,29 @@ def get_shuffled(X, y=None):
         shuffled_y = y[inds]
     return shuffled_X, shuffled_y
 
+def log(msg):
+    sys.stdout.write('%s\n' % msg)
+    sys.stdout.flush()
+
 def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_inds, non_pivot_candidate_inds, X_train_unlabeled=None, y_train_target=None, X_test_source=None, y_test_source=None):
     assert X_train_source.shape[1] == X_train_target.shape[1], "Source and target training data do not have the same number of features!"
 
     device='cuda' if torch.cuda.is_available() else 'cpu'
  
-    epochs = 10
+    epochs = 20
     recon_weight = 1.0
     # oracle_weight = 1.0
     max_batch_size = 50
     pivot_hidden_nodes = 500
+    weight_decay = 0.01
  
     if y_train_target is None:
-        print('Proceeding in standard semi-supervised pivot-learning mode')
+        log('Proceeding in standard semi-supervised pivot-learning mode')
     else:
-        print('Proceeding in oracle mode (using target labels to jointly train pivot learner')
+        log('Proceeding in oracle mode (using target labels to jointly train pivot learner')
     
 
-    print('There are %d candidate pivot features that meet source and target frequency requirements and %d pivot predictors' % (len(pivot_candidate_inds), len(non_pivot_candidate_inds)))
+    log('There are %d candidate pivot features that meet source and target frequency requirements and %d pivot predictors' % (len(pivot_candidate_inds), len(non_pivot_candidate_inds)))
     
     num_source_instances, num_features = X_train_source.shape
     num_target_instances = X_train_target.shape[0]
@@ -94,7 +99,7 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
         num_unlabeled_instances = X_train_unlabeled.shape[0]
         if num_unlabeled_instances > num_source_instances:
             un_batch_size = num_unlabeled_instances // num_batches
-            print("Unlabeled data will be processed in batches of size %d" % (un_batch_size))
+            log("Unlabeled data will be processed in batches of size %d" % (un_batch_size))
         else:
             raise Exception("ERROR: There are too few unlabeled instances. Is something wrong?\n")
 
@@ -102,7 +107,7 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
     task_lossfn = nn.BCEWithLogitsLoss().to(device)
     recon_lossfn = nn.BCEWithLogitsLoss().to(device)
 
-    opt = optim.Adam(model.parameters(), weight_decay=0.1) 
+    opt = optim.Adam(model.parameters(), weight_decay=weight_decay) 
     best_valid_f1 = 0
 
     for epoch in range(epochs):
@@ -148,13 +153,27 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
 
             target_recon_loss = recon_lossfn(pivot_pred, pivot_labels)
 
-            # TODO: Add some work here to do on the unlabeled instances
-            batch_unlabeled_X = torch.FloatTensor(unlabeled_X[un_batch_ind:un_batch_ind+un_batch_size, :]).to(device)
-            non_pivot_inputs = torch.FloatTensor(unlabeled_X[un_batch_ind:un_batch_ind+un_batch_size,non_pivot_candidate_inds]).to(device)
-            pivot_labels = torch.FloatTensor(unlabeled_X[un_batch_ind:un_batch_ind+un_batch_size, pivot_candidate_inds]).to(device)
-            unlabeled_task_pred, pivot_pred = model(batch_unlabeled_X, non_pivot_inputs)
+            # do representation learning on the unlabeled instances
+            # batch_unlabeled_X = unlabeled_X[un_batch_ind:un_batch_ind+un_batch_size, :]
+            # if un_batch_size > max_batch_size:
+            num_sub_batches = 1 + (un_batch_size // max_batch_size)
+            sub_batch_start_ind = 0
+            unlabeled_recon_loss = 0.0
+            for sub_batch in range(num_sub_batches):
+                sub_batch_size = min(max_batch_size, un_batch_size - sub_batch*max_batch_size )
+                if sub_batch_size <= 0:
+                    print('Found an edge case where sub_batch_size<=0 with un_batch_size=%d' % (un_batch_size))
+                    break
+                if sub_batch_size < max_batch_size:
+                    #print('Batch %d has size %d' % (sub_batch, sub_batch_size))
 
-            unlabeled_recon_loss = recon_lossfn(pivot_pred, pivot_labels)
+                sub_batch_unlabeled_X = torch.FloatTensor(unlabeled_X[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size, :]).to(device)
+                non_pivot_inputs = torch.FloatTensor(unlabeled_X[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size,non_pivot_candidate_inds]).to(device)
+                pivot_labels = torch.FloatTensor(unlabeled_X[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size, pivot_candidate_inds]).to(device)
+                _, pivot_pred = model(sub_batch_unlabeled_X, non_pivot_inputs)
+                unlabeled_recon_loss += recon_lossfn(pivot_pred, pivot_labels)
+                sub_batch_start_ind += max_batch_size
+
 
             # Compute the total loss and step the optimizer in the right direction:
             total_loss = (task_loss + 
@@ -173,8 +192,8 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
         prec = tps / true_preds
         rec = tps / true_labels
         f1 = 2 * prec * rec / (prec + rec)
-        print("Epoch %d finished: loss=%f" % (epoch, epoch_loss) )
-        print("  Training accuracy=%f, p=%f, rec=%f, f1=%f" % (acc, prec, rec, f1))
+        log("Epoch %d finished: loss=%f" % (epoch, epoch_loss) )
+        log("  Training accuracy=%f, p=%f, rec=%f, f1=%f" % (acc, prec, rec, f1))
 
         if not X_test_source is None:
             test_X = torch.FloatTensor(X_test_source).to(device)
@@ -190,24 +209,29 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
             rec = tps / test_true_labels
             prec = tps / test_true_preds
             f1 = 2 * rec * prec / (rec + prec)
-            print("  Validation accuracy=%f, p=%f, rec=%f, f1=%f" % (acc, prec, rec, f1))
+            log("  Validation accuracy=%f, p=%f, rec=%f, f1=%f" % (acc, prec, rec, f1))
 
             if f1 > best_valid_f1:
                 sys.stderr.write('Writing model at epoch %d\n' % (epoch))
+                sys.stderr.flush()
                 best_valid_f1 = f1
                 torch.save(model, 'best_model.pt')
 
 
 def main(args):
+    if not torch.cuda.is_available():
+        sys.stderr.write('WARNING: CUDA is not available... this may run very slowly!')
+        
     domain = [] 
     domain.append("books")
     domain.append("dvd")
     domain.append("electronics")
     domain.append("kitchen")
 
-    source_ind = 2 
-    target_ind = 0
+    source_ind = 2
+    target_ind = 1
 
+    log("Running system on source=%s and target=%s" % (domain[source_ind], domain[target_ind]))
 
     un_count = 40
     src = domain[source_ind]
@@ -230,30 +254,25 @@ def main(args):
             train_labels = pickle.load(f)
         with open(src + "_to_" + dest + "/split/test_labels", 'rb') as f:
             test_labels = pickle.load(f)
-        with open(src + "_to_" + dest + "/split/target_train", 'rb') as f:
-            target_train = pickle.load(f)
-        with open(src + "_to_" + dest + "/split/target_test", 'rb') as f:
-            target_test = pickle.load(f)
-        with open(src + "_to_" + dest + "/split/target_train_labels", 'rb') as f:
-            target_train_labels = pickle.load(f)
-        with open(src + "_to_" + dest + "/split/target_test_labels", 'rb') as f:
-            target_test_labels = pickle.load(f)
-
 
     # gets all the train and test for pivot classification
     unlabeled_only,source,target=XML2arrayRAW("data/"+src+"/"+src+"UN.txt","data/"+dest+"/"+dest+"UN.txt")
     source=source+train
     un_count = 40
 
+    lbl_num = 1000
+    dest_test, _,_ = XML2arrayRAW("data/"+dest+"/negative.parsed","data/"+dest+"/positive.parsed")
+    dest_test_labels= [0]*lbl_num+[1]*lbl_num
 
     unlabeled=source+target
 
     bigram_vectorizer_unlabeled = CountVectorizer(ngram_range=(1, 2), token_pattern=r'\b\w+\b', min_df=un_count, binary=True)
+    # This array isn't used anywhere but it's used to train the vectorizer:
     X_2_train_unlabeled = bigram_vectorizer_unlabeled.fit_transform(unlabeled).toarray()
 
     X_2_train_unlabeled_un_encoded = bigram_vectorizer_unlabeled.transform(unlabeled_only).toarray()
     X_2_train_source_un_encoded = bigram_vectorizer_unlabeled.transform(train).toarray()
-    X_2_train_target_un_encoded = bigram_vectorizer_unlabeled.transform(target_train).toarray()
+    X_2_train_target_un_encoded = bigram_vectorizer_unlabeled.transform(dest_test).toarray()
     X_2_test_source_un_encoded = bigram_vectorizer_unlabeled.transform(test).toarray()
 
     source_cands = np.where(X_2_train_source_un_encoded.sum(0) > 10)[0]
@@ -276,11 +295,12 @@ def main(args):
     best_model = torch.load('best_model.pt')
 
     device='cuda' if torch.cuda.is_available() else 'cpu'
-    X_2_test_target_un_encoded = bigram_vectorizer_unlabeled.transform(target_train).toarray()
+
+    X_2_test_target_un_encoded = bigram_vectorizer_unlabeled.transform(dest_test).toarray()
     X_2_test_target_non_pivot = X_2_test_target_un_encoded[:,non_pivot_candidate_inds]
 
     target_X = torch.FloatTensor(X_2_test_target_un_encoded).to(device)
-    target_y = np.array(target_train_labels)
+    target_y = np.array(dest_test_labels)
     target_X_nonpivot = torch.FloatTensor(X_2_test_target_non_pivot).to(device)
 
     target_test_predict_raw,_ = best_model(target_X, target_X_nonpivot)
@@ -295,7 +315,7 @@ def main(args):
     rec = tps / test_true_labels
     prec = tps / test_true_preds
     f1 = 2 * rec * prec / (rec + prec)
-    print("  Target accuracy=%f, p=%f, rec=%f, f1=%f" % (acc, prec, rec, f1))
+    log("  Target accuracy=%f, p=%f, rec=%f, f1=%f" % (acc, prec, rec, f1))
 
 
 
