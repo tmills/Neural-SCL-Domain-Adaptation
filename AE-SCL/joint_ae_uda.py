@@ -29,14 +29,15 @@ class JointLearnerModel(nn.Module):
         num_features = input_features + pivot_hidden_nodes
         
         # task_classifier maps from a feature representation to a task prediction
-        self.task_classifier = nn.Sequential()
-        self.task_classifier.add_module('task_binary', nn.Linear(num_features, 1))
-        #self.task_classifier.add_module('task_sigmoid', nn.Sigmoid())
+        self.task_classifier = nn.Linear(num_features,1)
+        # nn.init.xavier_normal_(self.task_classifier.weight)
         
         # domain classifier maps from a feature representation to a domain prediction
         #self.pivot_ae = nn.Sequential()
         self.rep_projector = nn.Linear(non_pivot_candidates, pivot_hidden_nodes)
+        # nn.init.xavier_normal_(self.rep_projector.weight)
         self.rep_predictor = nn.Linear(pivot_hidden_nodes, num_pivot_candidates)
+        # nn.init.xavier_normal_(self.rep_predictor.weight)
         
     def forward(self, full_input, pivot_input):
 
@@ -71,12 +72,13 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
 
     device='cuda' if torch.cuda.is_available() else 'cpu'
  
-    epochs = 15
-    recon_weight = 7.0
+    epochs = 25
+    recon_weight = 10.0
     # oracle_weight = 1.0
     max_batch_size = 50
     pivot_hidden_nodes = 500
     weight_decay = 0.0000 #1
+    lr = 0.001  # adam default is 0.001
  
     if y_train_target is None:
         log('Proceeding in standard semi-supervised pivot-learning mode')
@@ -109,8 +111,8 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
     task_lossfn = nn.BCEWithLogitsLoss().to(device)
     recon_lossfn = nn.BCEWithLogitsLoss().to(device)
 
-    opt = optim.Adam(model.parameters(), weight_decay=weight_decay) 
-    best_valid_f1 = 0
+    opt = optim.Adam(model.parameters(), weight_decay=weight_decay, lr=lr) 
+    best_valid_acc = 0
 
     for epoch in range(epochs):
         source_batch_ind = 0
@@ -191,11 +193,8 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
 
         # Print out some useful info: losses, weights of pivot filter, accuracy
         acc = correct_preds / source_batch_ind
-        prec = tps / true_preds
-        rec = tps / true_labels
-        f1 = 2 * prec * rec / (prec + rec)
         log("Epoch %d finished: loss=%f" % (epoch, epoch_loss) )
-        log("  Training accuracy=%f, p=%f, rec=%f, f1=%f" % (acc, prec, rec, f1))
+        log("  Training accuracy=%f" % (acc))
 
         if not X_test_source is None:
             test_X = torch.FloatTensor(X_test_source).to(device)
@@ -205,18 +204,12 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
             correct_preds = (y_test_source == test_preds).sum()
             acc = correct_preds / len(y_test_source)
 
-            tps = (test_preds * y_test_source).sum().item()
-            test_true_labels = y_test_source.sum().item()
-            test_true_preds = test_preds.sum()
-            rec = tps / test_true_labels
-            prec = tps / test_true_preds
-            f1 = 2 * rec * prec / (rec + prec)
-            log("  Validation accuracy=%f, p=%f, rec=%f, f1=%f" % (acc, prec, rec, f1))
+            log("  Validation accuracy=%f" % (acc))
 
-            if f1 > best_valid_f1:
+            if acc > best_valid_acc:
                 sys.stderr.write('Writing model at epoch %d\n' % (epoch))
                 sys.stderr.flush()
-                best_valid_f1 = f1
+                best_valid_acc = acc
                 torch.save(model, 'best_model.pt')
 
         del unlabeled_X
@@ -353,7 +346,7 @@ def main(args):
     # rec = tps / test_true_labels
     # prec = tps / test_true_preds
     # f1 = 2 * rec * prec / (rec + prec)
-    log("  Target accuracy=%f" % (acc))
+    log("Target accuracy=%f" % (acc))
 
 
 
