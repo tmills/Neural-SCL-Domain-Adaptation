@@ -30,14 +30,11 @@ class JointLearnerModel(nn.Module):
         
         # task_classifier maps from a feature representation to a task prediction
         self.task_classifier = nn.Linear(num_features,1)
-        # nn.init.xavier_normal_(self.task_classifier.weight)
         
         # domain classifier maps from a feature representation to a domain prediction
         #self.pivot_ae = nn.Sequential()
         self.rep_projector = nn.Linear(non_pivot_candidates, pivot_hidden_nodes)
-        # nn.init.xavier_normal_(self.rep_projector.weight)
         self.rep_predictor = nn.Linear(pivot_hidden_nodes, num_pivot_candidates)
-        # nn.init.xavier_normal_(self.rep_predictor.weight)
         
     def forward(self, full_input, pivot_input):
 
@@ -53,43 +50,47 @@ class JointLearnerModel(nn.Module):
 
         return task_prediction, pivot_pred, pivot_rep
 
-def get_shuffled(X, y=None):
-    inds = np.arange(X.shape[0])
+def get_shuffled(X_feats, X_ae=None, y=None):
+    inds = np.arange(X_feats.shape[0])
     np.random.shuffle(inds)
-    shuffled_X = X[inds, :]
+    shuffled_X_feats = X_feats[inds, :]
+
+    if X_ae is None:
+        shuffled_X_ae = None
+    else:
+        shuffled_X_ae = X_ae[inds, :]
+
     if y is None:
         shuffled_y = None
     else:
         shuffled_y = y[inds]
-    return shuffled_X, shuffled_y
+    return shuffled_X_feats, shuffled_X_ae, shuffled_y
 
 def log(msg):
     sys.stdout.write('%s\n' % msg)
     sys.stdout.flush()
 
-def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_inds, non_pivot_candidate_inds, X_train_unlabeled=None, y_train_target=None, X_test_source=None, y_test_source=None):
-    assert X_train_source.shape[1] == X_train_target.shape[1], "Source and target training data do not have the same number of features!"
+def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_ae, ae_input_inds, ae_output_inds, y_target=None, X_unlabeled_feats=None, X_unlabeled_ae=None,  X_source_valid_feats=None, X_source_valid_ae=None, y_source_valid=None):
+    assert X_source_feats.shape[1] == X_target_feats.shape[1], "Source and target training data do not have the same number of features!"
+    assert X_source_feats.shape[1] == X_unlabeled_feats.shape[1], "Source and unlabeled training data do not have the same number of features!"
 
     device='cuda' if torch.cuda.is_available() else 'cpu'
  
     epochs = 25
-    recon_weight = 10.0
+    recon_weight = 100.0
+    l2_weight = 0.0 #1
     # oracle_weight = 1.0
     max_batch_size = 50
     pivot_hidden_nodes = 500
     weight_decay = 0.0000 #1
     lr = 0.001  # adam default is 0.001
  
-    if y_train_target is None:
-        log('Proceeding in standard semi-supervised pivot-learning mode')
-    else:
-        log('Proceeding in oracle mode (using target labels to jointly train pivot learner')
+    log('Proceeding in standard semi-supervised pivot-learning mode')
     
-
-    log('There are %d candidate pivot features that meet source and target frequency requirements and %d pivot predictors' % (len(pivot_candidate_inds), len(non_pivot_candidate_inds)))
+    log('There are %d auto-encoder output features that meet source and target frequency requirements and %d predictors' % (len(ae_output_inds), len(ae_input_inds)))
     
-    num_source_instances, num_features = X_train_source.shape
-    num_target_instances = X_train_target.shape[0]
+    num_source_instances, num_features = X_source_feats.shape
+    num_target_instances = X_target_feats.shape[0]
     if num_source_instances > num_target_instances:
         source_batch_size = max_batch_size
         num_batches = (num_source_instances // max_batch_size)
@@ -99,17 +100,19 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
         num_batches = (num_target_instances // max_batch_size)
         source_batch_size = (num_source_instances // num_batches)
 
-    if not X_train_unlabeled is None:
-        num_unlabeled_instances = X_train_unlabeled.shape[0]
+    if not X_unlabeled_feats is None:
+        assert X_unlabeled_ae is not None, 'If X_unlabeled_feats is present, X_unlabeled_ae must also be present'
+        num_unlabeled_instances = X_unlabeled_feats.shape[0]
         if num_unlabeled_instances > num_source_instances:
             un_batch_size = num_unlabeled_instances // num_batches
             log("Unlabeled data will be processed in batches of size %d" % (un_batch_size))
         else:
             raise Exception("ERROR: There are too few unlabeled instances. Is something wrong?\n")
 
-    model = JointLearnerModel(num_features, len(non_pivot_candidate_inds), len(pivot_candidate_inds), pivot_hidden_nodes=pivot_hidden_nodes).to(device)
+    model = JointLearnerModel(num_features, len(ae_input_inds), len(ae_output_inds), pivot_hidden_nodes=pivot_hidden_nodes).to(device)
     task_lossfn = nn.BCEWithLogitsLoss().to(device)
     recon_lossfn = nn.BCEWithLogitsLoss().to(device)
+    l2_lossfn = nn.MSELoss(reduction='sum').to(device)
 
     opt = optim.Adam(model.parameters(), weight_decay=weight_decay, lr=lr) 
     best_valid_acc = 0
@@ -124,20 +127,27 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
         true_preds = 0      # denom for prec
         correct_preds = 0   # For accuracy
 
-        source_X, source_y = get_shuffled(X_train_source, y_train_source)
-        target_X, target_y = get_shuffled(X_train_target, y_train_target)
-        unlabeled_X,_ = get_shuffled(X_train_unlabeled)
+        source_X, source_X_ae, source_y = get_shuffled(X_source_feats, X_source_ae, y_source)
+        target_X, target_X_ae, target_y = get_shuffled(X_target_feats, X_target_ae, y_target)
+        unlabeled_X, unlabeled_X_ae,_ = get_shuffled(X_unlabeled_feats, X_unlabeled_ae)
 
         for batch in range(num_batches):
             model.zero_grad()
 
             # Pass it source examples and compute task loss and pivot reconstruction loss:
-            batch_source_X = torch.FloatTensor(source_X[source_batch_ind:source_batch_ind+source_batch_size, :]).to(device)
-            non_pivot_inputs = torch.FloatTensor(source_X[source_batch_ind:source_batch_ind+source_batch_size,non_pivot_candidate_inds]).to(device)
-            pivot_labels = torch.FloatTensor(source_X[source_batch_ind:source_batch_ind+source_batch_size,pivot_candidate_inds]).to(device)
-            task_pred,pivot_pred,_ = model(batch_source_X, non_pivot_inputs)
+            batch_source_X = torch.FloatTensor(source_X[source_batch_ind:source_batch_ind+source_batch_size, :].toarray()).to(device)
+
+            ae_inputs = torch.FloatTensor(source_X_ae[source_batch_ind:source_batch_ind+source_batch_size,ae_input_inds].toarray()).to(device)
+
+            task_pred,pivot_pred,_ = model(batch_source_X, ae_inputs)
+
+            # Get task loss:
             batch_source_y = torch.FloatTensor(source_y[source_batch_ind:source_batch_ind+source_batch_size]).to(device).unsqueeze(1)
             task_loss = task_lossfn(task_pred, batch_source_y)
+
+            # Get reconstruction loss:
+            ae_outputs = torch.FloatTensor(source_X_ae[source_batch_ind:source_batch_ind+source_batch_size,ae_output_inds].toarray()).to(device)
+            source_recon_loss = recon_lossfn(pivot_pred, ae_outputs)
            
             # since we don't have a sigmoid in our network's task output (it is part of the loss function for numerical stability), we need to manually apply the sigmoid if we want to do some standard acc/p/r/f calculations.
             task_bin_pred = np.round(sigmoid(task_pred).data.cpu().numpy())[:,0]
@@ -146,16 +156,18 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
             tps += (task_bin_pred * batch_source_y[:,0]).sum().item()
             correct_preds += (task_bin_pred == batch_source_y[:,0]).sum().item()
 
-            source_recon_loss = recon_lossfn(pivot_pred, pivot_labels)
 
             # pass it target examples and compute reconstruction loss:
-            batch_target_X = torch.FloatTensor(target_X[target_batch_ind:target_batch_ind+target_batch_size, :]).to(device)
-            non_pivot_inputs = torch.FloatTensor(target_X[target_batch_ind:target_batch_ind+target_batch_size,non_pivot_candidate_inds]).to(device)
-            pivot_labels = torch.FloatTensor(target_X[target_batch_ind:target_batch_ind+target_batch_size,pivot_candidate_inds]).to(device)
-            target_task_pred,pivot_pred,_ = model(batch_target_X, non_pivot_inputs)
+            batch_target_X = torch.FloatTensor(target_X[target_batch_ind:target_batch_ind+target_batch_size, :].toarray()).to(device)
+            ae_inputs = torch.FloatTensor(target_X_ae[target_batch_ind:target_batch_ind+target_batch_size,ae_input_inds].toarray()).to(device)
+
+            target_task_pred,pivot_pred,_ = model(batch_target_X, ae_inputs)
+
             # No task loss because we don't have target labels
 
-            target_recon_loss = recon_lossfn(pivot_pred, pivot_labels)
+            # Reconstruction loss:
+            ae_outputs = torch.FloatTensor(target_X_ae[target_batch_ind:target_batch_ind+target_batch_size,ae_output_inds].toarray()).to(device)
+            target_recon_loss = recon_lossfn(pivot_pred, ae_outputs)
 
             # do representation learning on the unlabeled instances
             # batch_unlabeled_X = unlabeled_X[un_batch_ind:un_batch_ind+un_batch_size, :]
@@ -171,16 +183,18 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
                 #if sub_batch_size < max_batch_size:
                     #print('Batch %d has size %d' % (sub_batch, sub_batch_size))
 
-                sub_batch_unlabeled_X = torch.FloatTensor(unlabeled_X[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size, :]).to(device)
-                non_pivot_inputs = torch.FloatTensor(unlabeled_X[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size,non_pivot_candidate_inds]).to(device)
-                pivot_labels = torch.FloatTensor(unlabeled_X[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size, pivot_candidate_inds]).to(device)
-                _, pivot_pred,_ = model(sub_batch_unlabeled_X, non_pivot_inputs)
-                unlabeled_recon_loss += recon_lossfn(pivot_pred, pivot_labels)
+                sub_batch_unlabeled_X = torch.FloatTensor(unlabeled_X[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size, :].toarray()).to(device)
+                ae_inputs = torch.FloatTensor(unlabeled_X_ae[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size,ae_input_inds].toarray()).to(device)
+                ae_outputs = torch.FloatTensor(unlabeled_X_ae[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size, ae_output_inds].toarray()).to(device)
+                _, pivot_pred,_ = model(sub_batch_unlabeled_X, ae_inputs)
+                unlabeled_recon_loss += recon_lossfn(pivot_pred, ae_outputs)
                 sub_batch_start_ind += max_batch_size
 
 
             # Compute the total loss and step the optimizer in the right direction:
+            l2_loss = l2_lossfn( model.task_classifier.weight, torch.zeros_like(model.task_classifier.weight))
             total_loss = (task_loss + 
+                         l2_weight * l2_loss +
                          recon_weight * (source_recon_loss + target_recon_loss + unlabeled_recon_loss))
             epoch_loss += total_loss.item()
             total_loss.backward()
@@ -196,13 +210,13 @@ def train_model(X_train_source, y_train_source, X_train_target, pivot_candidate_
         log("Epoch %d finished: loss=%f" % (epoch, epoch_loss) )
         log("  Training accuracy=%f" % (acc))
 
-        if not X_test_source is None:
-            test_X = torch.FloatTensor(X_test_source).to(device)
-            test_np_input = torch.FloatTensor(X_test_source[:, non_pivot_candidate_inds]).to(device)
+        if not X_source_valid_feats is None:
+            test_X = torch.FloatTensor(X_source_valid_feats.toarray()).to(device)
+            test_np_input = torch.FloatTensor(X_source_valid_ae[:, ae_input_inds].toarray()).to(device)
             # test_y = torch.FloatTensor(y_test_source).to(device)
             test_preds = np.round(sigmoid(model(test_X, test_np_input)[0]).data.cpu().numpy())[:,0]
-            correct_preds = (y_test_source == test_preds).sum()
-            acc = correct_preds / len(y_test_source)
+            correct_preds = (y_source_valid == test_preds).sum()
+            acc = correct_preds / len(y_source_valid)
 
             log("  Validation accuracy=%f" % (acc))
 
@@ -250,8 +264,8 @@ def main(args):
             test_labels = pickle.load(f)
 
     # gets all the train and test for pivot classification
-    unlabeled_only,source,target=XML2arrayRAW("data/"+src+"/"+src+"UN.txt","data/"+dest+"/"+dest+"UN.txt")
-    source=source+train
+    unlabeled_only,source_only,target=XML2arrayRAW("data/"+src+"/"+src+"UN.txt","data/"+dest+"/"+dest+"UN.txt")
+    source_all=source_only+train
     un_count = 40
     num_pivots = 100   # Only used in configuration that uses MI to get pivots
     pivot_min_count = 10
@@ -260,84 +274,91 @@ def main(args):
     dest_test, _,_ = XML2arrayRAW("data/"+dest+"/negative.parsed","data/"+dest+"/positive.parsed")
     dest_test_labels= [0]*lbl_num+[1]*lbl_num
 
-    unlabeled=source+target
+    unlabeled=source_all+target
 
-    bigram_vectorizer_unlabeled = CountVectorizer(ngram_range=(1, 2), token_pattern=r'\b\w+\b', min_df=un_count, binary=True)
-    # This array isn't used anywhere but it's used to train the vectorizer:
-    X_2_train_unlabeled = bigram_vectorizer_unlabeled.fit_transform(unlabeled).toarray()
+    encoder_feats = CountVectorizer(ngram_range=(1, 2), token_pattern=r'\b\w+\b', min_df=20, binary=True)
+    X_source_feats = encoder_feats.fit_transform(train)
+    X_target_feats = encoder_feats.transform(dest_test)
+    X_unlabeled_feats = encoder_feats.transform(unlabeled)
+    X_source_valid_feats = encoder_feats.transform(test)
 
-    X_2_train_unlabeled_un_encoded = bigram_vectorizer_unlabeled.transform(unlabeled_only).toarray()
-    X_2_train_source_un_encoded = bigram_vectorizer_unlabeled.transform(train).toarray()
-    X_2_train_allsource_un_encoded = bigram_vectorizer_unlabeled.transform(source).toarray()
-    X_2_train_target_un_encoded = bigram_vectorizer_unlabeled.transform(dest_test).toarray()
-    X_2_test_source_un_encoded = bigram_vectorizer_unlabeled.transform(test).toarray()
+    encoder_ae = CountVectorizer(ngram_range=(1, 2), token_pattern=r'\b\w+\b', min_df=un_count, binary=True)
+    X_unlabeled_ae = encoder_ae.fit_transform(unlabeled)
 
-    source_cands = np.where(X_2_train_source_un_encoded.sum(0) > 10)[0]
-    target_cands = np.where(X_2_train_target_un_encoded.sum(0) > 10)[0]
+    X_unlabeledonly_ae = encoder_ae.transform(unlabeled_only)
+    X_source_ae = encoder_ae.transform(train)
+    X_allsource_ae = encoder_ae.transform(source_all)
+    X_target_ae = encoder_ae.transform(dest_test)
+    X_source_valid_ae = encoder_ae.transform(test)
+
 
     if args.method == 'freq':
+        source_cands = np.where(X_source_ae.sum(0) > pivot_min_count)[1]
+        target_cands = np.where(X_target_ae.sum(0) > pivot_min_count)[1]
         # pivot candidates are those that meet frequency cutoff in both domains train data:
-        pivot_candidate_inds = np.intersect1d(source_cands, target_cands)
+        ae_output_inds = np.intersect1d(source_cands, target_cands)
         # non-pivot candidates are the set difference - those that didn't meet the frequency cutoff in both domains:
-        non_pivot_candidate_inds = np.setdiff1d(range(X_2_train_source_un_encoded.shape[1]), pivot_candidate_inds)
+        ae_input_inds = np.setdiff1d(range(X_unlabeled_ae.shape[1]), ae_output_inds)
     elif args.method == 'ae':
-        pivot_candidate_inds = non_pivot_candidate_inds = range(X_2_train_source_un_encoded.shape[1])
+        ae_input_inds = ae_output_inds = range(X_unlabeled_ae.shape[1])
     elif args.method == 'mi':
         # Run the sklearn mi feature selection:
-        MIs, MI = GetTopNMI(2000, X_2_train_source_un_encoded, train_labels)
+        MIs, MI = GetTopNMI(2000, X_source_ae.toarray(), train_labels)
         MIs.reverse()
-        pivot_candidate_inds = []
+        ae_output_inds = []
         i=c=0
         while c < num_pivots:
-            s_count = X_2_train_allsource_un_encoded[:,i].sum()
-            t_count = X_2_train_target_un_encoded[:,i].sum()
+            s_count = X_allsource_ae[:,i].sum()
+            t_count = X_target_ae[:,i].sum()
             if s_count >= pivot_min_count and t_count >= pivot_min_count:
-                pivot_candidate_inds.append(MIs[i])
+                ae_output_inds.append(MIs[i])
                 c += 1
-                print("feature %d is '%s' with mi %f" % (c, bigram_vectorizer_unlabeled.get_feature_names()[MIs[i]], MI[MIs[i]]))
+                print("feature %d is '%s' with mi %f" % (c, encoder_ae.get_feature_names()[MIs[i]], MI[MIs[i]]))
             i += 1
 
 
-        pivot_candidate_inds.sort()
-        non_pivot_candidate_inds = np.setdiff1d(range(X_2_train_source_un_encoded.shape[1]), pivot_candidate_inds)
+        ae_output_inds.sort()
+        ae_input_inds = np.setdiff1d(range(X_unlabeled_ae.shape[1]), ae_output_inds)
         
-    train_model(X_2_train_source_un_encoded, 
+    train_model(X_source_feats,
+                X_source_ae,
                 np.array(train_labels), 
-                X_2_train_target_un_encoded,
-                pivot_candidate_inds,
-                non_pivot_candidate_inds,
-                X_2_train_unlabeled_un_encoded,
-                y_train_target=None,  # If we come up with oracle mode this can be non-None
-                X_test_source=X_2_test_source_un_encoded, 
-                y_test_source=np.array(test_labels))
+                X_target_feats,
+                X_target_ae,
+                ae_input_inds,
+                ae_output_inds,
+                X_unlabeled_feats=X_unlabeled_feats,
+                X_unlabeled_ae=X_unlabeled_ae,
+                y_target=None,  # If we come up with oracle mode this can be non-None
+                X_source_valid_feats=X_source_valid_feats,
+                X_source_valid_ae=X_source_valid_ae,
+                y_source_valid=np.array(test_labels))
 
     best_model = torch.load('best_model.pt')
 
     device='cuda' if torch.cuda.is_available() else 'cpu'
 
-    X_2_test_target_un_encoded = bigram_vectorizer_unlabeled.transform(dest_test).toarray()
-    X_2_test_target_non_pivot = X_2_test_target_un_encoded[:,non_pivot_candidate_inds]
-    target_X = torch.FloatTensor(X_2_test_target_un_encoded).to(device)
-    target_X_nonpivot = torch.FloatTensor(X_2_test_target_non_pivot).to(device)
+    target_X_feats = torch.FloatTensor(X_target_feats.toarray()).to(device)
+    target_X_ae = torch.FloatTensor(X_target_ae[:,ae_input_inds].toarray()).to(device)
     target_y = np.array(dest_test_labels)
     if args.eval == 'pt':
-        target_test_predict_raw,_,_ = best_model(target_X, target_X_nonpivot)
+        target_test_predict_raw,_,_ = best_model(target_X_feats, target_X_ae)
         target_test_predict = np.round(sigmoid(target_test_predict_raw).data.cpu().numpy())[:,0]
         correct_preds = (target_y == target_test_predict).sum()
         acc = correct_preds / len(target_y)
-    elif args.eval == 'lr':
-        c_parm = 0.1
-        logreg =  LogisticRegression(C=c_parm)
-        source_X_pt = torch.FloatTensor(X_2_train_source_un_encoded).to(device)
-        source_X_np_pt = source_X_pt[:, non_pivot_candidate_inds]
-        source_reps = best_model(source_X_pt, source_X_np_pt)[2].data.cpu().numpy()
-        allfeatures = np.concatenate( (X_2_train_source_un_encoded, source_reps), axis=1)
-        # Train with source features:
-        logreg.fit(allfeatures, train_labels)
+    # elif args.eval == 'lr':
+        # c_parm = 0.1
+        # logreg =  LogisticRegression(C=c_parm)
+        # source_X_pt = torch.FloatTensor(X_source_feats).to(device)
+        # source_X_np_pt = torch.FloatTensor(X_source_ae[:, non_pivot_candidate_inds])
+        # source_reps = best_model(source_X_pt, source_X_np_pt)[2].data.cpu().numpy()
+        # allfeatures = np.concatenate( (X_train_source_un_encoded, source_reps), axis=1)
+        # # Train with source features:
+        # logreg.fit(allfeatures, train_labels)
 
-        target_reps = best_model(target_X, target_X_nonpivot)[2].data.cpu().numpy()
-        allfeaturesFinal = np.concatenate( (X_2_test_target_un_encoded, target_reps), axis=1)
-        acc = logreg.score(allfeaturesFinal, dest_test_labels)
+        # target_reps = best_model(target_X, target_X_nonpivot)[2].data.cpu().numpy()
+        # allfeaturesFinal = np.concatenate( (X_2_test_target_un_encoded, target_reps), axis=1)
+        # acc = logreg.score(allfeaturesFinal, dest_test_labels)
 
 
     # tps = (target_test_predict * target_y).sum().item()
