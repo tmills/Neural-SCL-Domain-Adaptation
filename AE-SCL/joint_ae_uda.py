@@ -35,7 +35,7 @@ class ReverseLayerF(Function):
 
 class JointLearnerModel(nn.Module):
 
-    def __init__(self, input_features, non_pivot_candidates, num_pivot_candidates, pivot_hidden_nodes=100):
+    def __init__(self, input_features, non_pivot_candidates, num_pivot_candidates, pivot_hidden_nodes=100, dropout=0.5):
         super(JointLearnerModel, self).__init__()
 
         # The task net takes a concatenated input vector + predicted pivot vector and maps it to a prediction for the task
@@ -52,6 +52,8 @@ class JointLearnerModel(nn.Module):
 
         self.task2_classifier = nn.Linear(num_pivot_candidates,1)
         self.dom_classifier = nn.Linear(num_pivot_candidates,1)
+
+        self.dropout = nn.Dropout(p=dropout)
         
     def forward(self, full_input, pivot_input, alpha=1.0):
 
@@ -59,7 +61,7 @@ class JointLearnerModel(nn.Module):
         pivot_rep = sigmoid(self.rep_projector(pivot_input))
         pivot_pred = self.rep_predictor(pivot_rep)
 
-        task_input = torch.cat( (full_input, pivot_rep), dim=1 )
+        task_input = torch.cat( (self.dropout(full_input), pivot_rep), dim=1 )
         
         # Get task prediction
         task_prediction = self.task_classifier(task_input)
@@ -101,14 +103,15 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
  
     epochs = 30
     recon_weight = 100.0
-    l2_weight = 0.1 #1
-    t2_weight = 0.100
-    dom_weight = 0.10000
+    l2_weight = 0.0 #1
+    t2_weight = 0.000
+    dom_weight = 0.00000
     # oracle_weight = 1.0
     max_batch_size = 50
     pivot_hidden_nodes = 500
     weight_decay = 0.0000 #1
     lr = 0.001  # adam default is 0.001
+    dropout=0.2
  
     log('Proceeding in standard semi-supervised pivot-learning mode')
     
@@ -134,7 +137,7 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
         else:
             raise Exception("ERROR: There are too few unlabeled instances. Is something wrong?\n")
 
-    model = JointLearnerModel(num_features, len(ae_input_inds), len(ae_output_inds), pivot_hidden_nodes=pivot_hidden_nodes).to(device)
+    model = JointLearnerModel(num_features, len(ae_input_inds), len(ae_output_inds), pivot_hidden_nodes=pivot_hidden_nodes, dropout=dropout).to(device)
     task_lossfn = nn.BCEWithLogitsLoss().to(device)
     task2_lossfn = nn.BCEWithLogitsLoss().to(device)
     dom_lossfn = nn.BCEWithLogitsLoss().to(device)
@@ -160,8 +163,10 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
         unlabeled_X, unlabeled_X_ae,_,unlabeled_inds = get_shuffled(X_unlabeled_feats, X_unlabeled_ae)
         batch_unlabeled_dom_y = y_unlabeled_dom[unlabeled_inds]
 
+        model.train()
         for batch in range(num_batches):
             model.zero_grad()
+            opt.zero_grad()
 
             # ave_ind = source_batch_ind + source_batch_size // 2
             # p = float(ave_ind + epoch * num_source_instances*2) / (epochs * num_source_instances*2)
@@ -242,7 +247,7 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
                          l2_weight * l2_loss +
                          t2_weight * task2_loss +
                          dom_weight * dom_loss +
-                         recon_weight * (target_recon_loss + unlabeled_recon_loss))
+                         recon_weight * (source_recon_loss + target_recon_loss + unlabeled_recon_loss))
             epoch_loss += total_loss.item()
             total_loss.backward()
      
@@ -258,6 +263,7 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
         log("Epoch %d finished: loss=%f" % (epoch, epoch_loss) )
         log("  Training accuracy=%f" % (acc))
 
+        model.eval()
         if not X_source_valid_feats is None:
             test_X = torch.FloatTensor(X_source_valid_feats.toarray()).to(device)
             test_np_input = torch.FloatTensor(X_source_valid_ae[:, ae_input_inds].toarray()).to(device)
@@ -337,12 +343,12 @@ def main(args):
     y_unlabeled_dom = np.zeros((X_unlabeled_feats.shape[0],1))
     y_unlabeled_dom[:len(source_all),:] += 1
 
-    X_tgtun_feats = encoder_feats.transform(target_un)
-    y_tgtun_dom = np.zeros((X_tgtun_feats.shape[0],1))
+    # X_tgtun_feats = encoder_feats.transform(target_un)
+    # y_tgtun_dom = np.zeros((X_tgtun_feats.shape[0],1))
 
     encoder_ae = CountVectorizer(ngram_range=(1, 2), token_pattern=r'\b\w+\b', min_df=un_count, binary=True)
     X_unlabeled_ae = encoder_ae.fit_transform(unlabeled)
-    X_tgtun_ae = encoder_ae.transform(target_un)
+    # X_tgtun_ae = encoder_ae.transform(target_un)
 
     # X_unlabeledonly_ae = encoder_ae.transform(unlabeled_only)
     X_source_ae = encoder_ae.transform(train)
@@ -386,9 +392,9 @@ def main(args):
                 X_target_ae,
                 ae_input_inds,
                 ae_output_inds,
-                X_unlabeled_feats=X_tgtun_feats,
-                X_unlabeled_ae=X_tgtun_ae,
-                y_unlabeled_dom=y_tgtun_dom,
+                X_unlabeled_feats=X_unlabeled_feats,
+                X_unlabeled_ae=X_unlabeled_ae,
+                y_unlabeled_dom=y_unlabeled_dom,
                 y_target=None,  # If we come up with oracle mode this can be non-None
                 X_source_valid_feats=X_source_valid_feats,
                 X_source_valid_ae=X_source_valid_ae,
