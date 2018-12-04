@@ -53,6 +53,10 @@ class JointLearnerModel(nn.Module):
         self.task2_classifier = nn.Linear(num_pivot_candidates,1)
         self.dom_classifier = nn.Linear(num_pivot_candidates,1)
 
+        # self.feat_norm = nn.LayerNorm(input_features)
+        # self.ae_norm = nn.LayerNorm(pivot_hidden_nodes)
+        # self.input_norm = nn.LayerNorm(num_features)
+
         self.dropout = nn.Dropout(p=dropout)
         
     def forward(self, full_input, pivot_input, alpha=1.0):
@@ -61,10 +65,20 @@ class JointLearnerModel(nn.Module):
         pivot_rep = sigmoid(self.rep_projector(pivot_input))
         pivot_pred = self.rep_predictor(pivot_rep)
 
-        task_input = torch.cat( (self.dropout(full_input), pivot_rep), dim=1 )
+        # separate normalization
+        # full_input = self.feat_norm(full_input)
+        # pivot_rep = self.ae_norm(pivot_rep)
+
+        # Separate dropout
+        full_input = self.dropout(full_input)
+
+        task_input = torch.cat( (full_input, pivot_rep ), dim=1 )
         
+        # joint normalization
+        # task_input = self.input_norm(task_input)
+
         # Get task prediction
-        task_prediction = self.task_classifier(task_input)
+        task_prediction = self.task_classifier( task_input )
 
         task_prediction2 = self.task2_classifier(pivot_pred)
  
