@@ -165,145 +165,150 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
     sched = optim.lr_scheduler.ReduceLROnPlateau(opt, 'max', patience=5, factor=0.33)
     best_valid_acc = 0
 
-    for epoch in range(epochs):
-        source_batch_ind = 0
-        target_batch_ind = 0
-        un_batch_ind = 0
-        epoch_loss = 0
-        tps = 0             # num for P/R
-        true_labels = 0     # denom for recall
-        true_preds = 0      # denom for prec
-        correct_preds = 0   # For accuracy
+    try:
+        for epoch in range(epochs):
+            source_batch_ind = 0
+            target_batch_ind = 0
+            un_batch_ind = 0
+            epoch_loss = 0
+            tps = 0             # num for P/R
+            true_labels = 0     # denom for recall
+            true_preds = 0      # denom for prec
+            correct_preds = 0   # For accuracy
 
-        source_X, source_X_ae, source_y,_ = get_shuffled(X_source_feats, X_source_ae, y_source)
-        target_X, target_X_ae, target_y,_ = get_shuffled(X_target_feats, X_target_ae, y_target)
-        unlabeled_X, unlabeled_X_ae,_,unlabeled_inds = get_shuffled(X_unlabeled_feats, X_unlabeled_ae)
-        batch_unlabeled_dom_y = y_unlabeled_dom[unlabeled_inds]
+            source_X, source_X_ae, source_y,_ = get_shuffled(X_source_feats, X_source_ae, y_source)
+            target_X, target_X_ae, target_y,_ = get_shuffled(X_target_feats, X_target_ae, y_target)
+            unlabeled_X, unlabeled_X_ae,_,unlabeled_inds = get_shuffled(X_unlabeled_feats, X_unlabeled_ae)
+            batch_unlabeled_dom_y = y_unlabeled_dom[unlabeled_inds]
 
-        model.train()
-        for batch in range(num_batches):
-            model.zero_grad()
-            opt.zero_grad()
+            model.train()
+            for batch in range(num_batches):
+                model.zero_grad()
+                opt.zero_grad()
 
-            # ave_ind = source_batch_ind + source_batch_size // 2
-            # p = float(ave_ind + epoch * num_source_instances*2) / (epochs * num_source_instances*2)
-            # alpha = 2. / (1. + np.exp(-10 * p)) - 1
-            alpha = 1.0
+                # ave_ind = source_batch_ind + source_batch_size // 2
+                # p = float(ave_ind + epoch * num_source_instances*2) / (epochs * num_source_instances*2)
+                # alpha = 2. / (1. + np.exp(-10 * p)) - 1
+                alpha = 1.0
 
-            # Pass it source examples and compute task loss and pivot reconstruction loss:
-            batch_source_X = None #torch.FloatTensor(source_X[source_batch_ind:source_batch_ind+source_batch_size, :].toarray()).to(device)
+                # Pass it source examples and compute task loss and pivot reconstruction loss:
+                batch_source_X = None #torch.FloatTensor(source_X[source_batch_ind:source_batch_ind+source_batch_size, :].toarray()).to(device)
 
-            ae_inputs = torch.FloatTensor(source_X_ae[source_batch_ind:source_batch_ind+source_batch_size,ae_input_inds].toarray()).to(device)
+                ae_inputs = torch.FloatTensor(source_X_ae[source_batch_ind:source_batch_ind+source_batch_size,ae_input_inds].toarray()).to(device)
 
-            task_pred,pivot_pred,_,task2_pred,dom_pred = model(batch_source_X, ae_inputs, alpha=alpha)
+                task_pred,pivot_pred,_,task2_pred,dom_pred = model(batch_source_X, ae_inputs, alpha=alpha)
 
-            # Get task loss:
-            batch_source_y = torch.FloatTensor(source_y[source_batch_ind:source_batch_ind+source_batch_size]).to(device).unsqueeze(1)
-            task_loss = task_lossfn(task_pred, batch_source_y)
-            # task2_loss = task2_lossfn(task2_pred, batch_source_y)
+                # Get task loss:
+                batch_source_y = torch.FloatTensor(source_y[source_batch_ind:source_batch_ind+source_batch_size]).to(device).unsqueeze(1)
+                task_loss = task_lossfn(task_pred, batch_source_y)
+                # task2_loss = task2_lossfn(task2_pred, batch_source_y)
 
-            # Get domain loss:
-            batch_source_dom_y = torch.zeros_like(batch_source_y) + 1
-            # dom_loss = dom_lossfn(dom_pred, batch_source_dom_y)
+                # Get domain loss:
+                batch_source_dom_y = torch.zeros_like(batch_source_y) + 1
+                # dom_loss = dom_lossfn(dom_pred, batch_source_dom_y)
 
-            # Get reconstruction loss:
-            ae_outputs = torch.FloatTensor(source_X_ae[source_batch_ind:source_batch_ind+source_batch_size,ae_output_inds].toarray()).to(device)
-            source_recon_loss = recon_lossfn(pivot_pred, ae_outputs)
-           
-            # since we don't have a sigmoid in our network's task output (it is part of the loss function for numerical stability), we need to manually apply the sigmoid if we want to do some standard acc/p/r/f calculations.
-            task_bin_pred = np.round(sigmoid(task_pred).data.cpu().numpy())[:,0]
-            true_preds += task_bin_pred.sum().item()
-            true_labels += batch_source_y.sum().item()
-            tps += (task_bin_pred * batch_source_y[:,0]).sum().item()
-            correct_preds += (task_bin_pred == batch_source_y[:,0]).sum().item()
+                # Get reconstruction loss:
+                ae_outputs = torch.FloatTensor(source_X_ae[source_batch_ind:source_batch_ind+source_batch_size,ae_output_inds].toarray()).to(device)
+                source_recon_loss = recon_lossfn(pivot_pred, ae_outputs)
+                
+                # since we don't have a sigmoid in our network's task output (it is part of the loss function for numerical stability), we need to manually apply the sigmoid if we want to do some standard acc/p/r/f calculations.
+                task_bin_pred = np.round(sigmoid(task_pred).data.cpu().numpy())[:,0]
+                true_preds += task_bin_pred.sum().item()
+                true_labels += batch_source_y.sum().item()
+                tps += (task_bin_pred * batch_source_y[:,0]).sum().item()
+                correct_preds += (task_bin_pred == batch_source_y[:,0]).sum().item()
 
 
-            # pass it target examples and compute reconstruction loss:
-            batch_target_X = None #torch.FloatTensor(target_X[target_batch_ind:target_batch_ind+target_batch_size, :].toarray()).to(device)
-            ae_inputs = torch.FloatTensor(target_X_ae[target_batch_ind:target_batch_ind+target_batch_size,ae_input_inds].toarray()).to(device)
+                # pass it target examples and compute reconstruction loss:
+                batch_target_X = None #torch.FloatTensor(target_X[target_batch_ind:target_batch_ind+target_batch_size, :].toarray()).to(device)
+                ae_inputs = torch.FloatTensor(target_X_ae[target_batch_ind:target_batch_ind+target_batch_size,ae_input_inds].toarray()).to(device)
 
-            target_task_pred,pivot_pred,_,_,dom_pred = model(batch_target_X, ae_inputs, alpha=alpha)
+                target_task_pred,pivot_pred,_,_,dom_pred = model(batch_target_X, ae_inputs, alpha=alpha)
 
-            # No task loss because we don't have target labels
+                # No task loss because we don't have target labels
 
-            # domain loss:
-            batch_target_dom_y = torch.zeros_like(dom_pred)
-            # dom_loss += dom_lossfn(dom_pred, batch_target_dom_y)
+                # domain loss:
+                batch_target_dom_y = torch.zeros_like(dom_pred)
+                # dom_loss += dom_lossfn(dom_pred, batch_target_dom_y)
 
-            # Reconstruction loss:
-            ae_outputs = torch.FloatTensor(target_X_ae[target_batch_ind:target_batch_ind+target_batch_size,ae_output_inds].toarray()).to(device)
-            target_recon_loss = recon_lossfn(pivot_pred, ae_outputs)
+                # Reconstruction loss:
+                ae_outputs = torch.FloatTensor(target_X_ae[target_batch_ind:target_batch_ind+target_batch_size,ae_output_inds].toarray()).to(device)
+                target_recon_loss = recon_lossfn(pivot_pred, ae_outputs)
 
-            # do representation learning on the unlabeled instances
-            num_sub_batches = 1 + (un_batch_size // max_batch_size)
-            sub_batch_start_ind = 0
-            unlabeled_recon_loss = 0.0
-            for sub_batch in range(num_sub_batches):
-                sub_batch_size = min(max_batch_size, un_batch_size - sub_batch*max_batch_size )
-                if sub_batch_size <= 0:
-                    log('Found an edge case where sub_batch_size<=0 with un_batch_size=%d' % (un_batch_size))
-                    break
-                #if sub_batch_size < max_batch_size:
-                    #print('Batch %d has size %d' % (sub_batch, sub_batch_size))
+                # do representation learning on the unlabeled instances
+                num_sub_batches = 1 + (un_batch_size // max_batch_size)
+                sub_batch_start_ind = 0
+                unlabeled_recon_loss = 0.0
+                for sub_batch in range(num_sub_batches):
+                    sub_batch_size = min(max_batch_size, un_batch_size - sub_batch*max_batch_size )
+                    if sub_batch_size <= 0:
+                        log('Found an edge case where sub_batch_size<=0 with un_batch_size=%d' % (un_batch_size))
+                        break
+                    #if sub_batch_size < max_batch_size:
+                        #print('Batch %d has size %d' % (sub_batch, sub_batch_size))
 
-                sub_batch_unlabeled_X = None #torch.FloatTensor(unlabeled_X[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size, :].toarray()).to(device)
-                ae_inputs = torch.FloatTensor(unlabeled_X_ae[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size,ae_input_inds].toarray()).to(device)
-                ae_outputs = torch.FloatTensor(unlabeled_X_ae[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size, ae_output_inds].toarray()).to(device)
-                _, pivot_pred,_,_,dom_pred = model(sub_batch_unlabeled_X, ae_inputs, alpha=alpha)
-                sub_batch_dom_y = torch.FloatTensor( batch_unlabeled_dom_y[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size]).to(device)
-                # dom_loss += dom_lossfn(dom_pred, sub_batch_dom_y)
-                unlabeled_recon_loss += recon_lossfn(pivot_pred, ae_outputs)
-                sub_batch_start_ind += max_batch_size
+                    sub_batch_unlabeled_X = None #torch.FloatTensor(unlabeled_X[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size, :].toarray()).to(device)
+                    ae_inputs = torch.FloatTensor(unlabeled_X_ae[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size,ae_input_inds].toarray()).to(device)
+                    ae_outputs = torch.FloatTensor(unlabeled_X_ae[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size, ae_output_inds].toarray()).to(device)
+                    _, pivot_pred,_,_,dom_pred = model(sub_batch_unlabeled_X, ae_inputs, alpha=alpha)
+                    sub_batch_dom_y = torch.FloatTensor( batch_unlabeled_dom_y[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size]).to(device)
+                    # dom_loss += dom_lossfn(dom_pred, sub_batch_dom_y)
+                    unlabeled_recon_loss += recon_lossfn(pivot_pred, ae_outputs)
+                    sub_batch_start_ind += max_batch_size
 
-            l2_loss = l2_lossfn( model.task_classifier.weight, torch.zeros_like(model.task_classifier.weight))
-            # Compute the total loss and step the optimizer in the right direction:
-            if batch == 0:
-                log('Epoch %d: task=%f l2=%f src_recon=%f, tgt_recon=%f, un_recon=%f' % 
-                    (epoch, task_loss, l2_loss, source_recon_loss, target_recon_loss, unlabeled_recon_loss))
-            total_loss = (task_loss + 
-                         l2_weight * l2_loss +
-                        #  t2_weight * task2_loss +
-                        #  dom_weight * dom_loss +
-                         recon_weight * (source_recon_loss + target_recon_loss + unlabeled_recon_loss))
-            epoch_loss += total_loss.item()
-            total_loss.backward()
-     
-            opt.step()
+                l2_loss = l2_lossfn( model.task_classifier.weight, torch.zeros_like(model.task_classifier.weight))
+                # Compute the total loss and step the optimizer in the right direction:
+                if batch == 0:
+                    log('Epoch %d: task=%f l2=%f src_recon=%f, tgt_recon=%f, un_recon=%f' % 
+                        (epoch, task_loss, l2_loss, source_recon_loss, target_recon_loss, unlabeled_recon_loss))
+                total_loss = (task_loss + 
+                                l2_weight * l2_loss +
+                            #  t2_weight * task2_loss +
+                            #  dom_weight * dom_loss +
+                                recon_weight * (source_recon_loss + target_recon_loss + unlabeled_recon_loss))
+                epoch_loss += total_loss.item()
+                total_loss.backward()
             
-            source_batch_ind += source_batch_size
-            target_batch_ind += target_batch_size
-            un_batch_ind += un_batch_size
+                opt.step()
+                
+                source_batch_ind += source_batch_size
+                target_batch_ind += target_batch_size
+                un_batch_ind += un_batch_size
 
-        # Print out some useful info: losses, weights of pivot filter, accuracy
-        acc = correct_preds / source_batch_ind
+            # Print out some useful info: losses, weights of pivot filter, accuracy
+            acc = correct_preds / source_batch_ind
 
-        log("Epoch %d finished: loss=%f" % (epoch, epoch_loss) )
-        log("  Training accuracy=%f" % (acc))
+            log("Epoch %d finished: loss=%f" % (epoch, epoch_loss) )
+            log("  Training accuracy=%f" % (acc))
 
-        model.eval()
-        if not X_source_valid_feats is None:
-            test_X = None #torch.FloatTensor(X_source_valid_feats.toarray()).to(device)
-            test_np_input = torch.FloatTensor(X_source_valid_ae[:, ae_input_inds].toarray()).to(device)
-            # test_y = torch.FloatTensor(y_test_source).to(device)
-            test_preds = np.round(sigmoid(model(test_X, test_np_input)[0]).data.cpu().numpy())[:,0]
-            correct_preds = (y_source_valid == test_preds).sum()
-            acc = correct_preds / len(y_source_valid)
+            model.eval()
+            if not X_source_valid_feats is None:
+                test_X = None #torch.FloatTensor(X_source_valid_feats.toarray()).to(device)
+                test_np_input = torch.FloatTensor(X_source_valid_ae[:, ae_input_inds].toarray()).to(device)
+                # test_y = torch.FloatTensor(y_test_source).to(device)
+                test_preds = np.round(sigmoid(model(test_X, test_np_input)[0]).data.cpu().numpy())[:,0]
+                correct_preds = (y_source_valid == test_preds).sum()
+                acc = correct_preds / len(y_source_valid)
 
-            log("  Validation accuracy=%f" % (acc))
-            # sched.step(acc)
-            new_lr = [ group['lr'] for group in opt.param_groups ][0]
-            if new_lr != lr:
-                log("Learning rate modified to %f" % (new_lr))
-                lr = new_lr
+                log("  Validation accuracy=%f" % (acc))
+                # sched.step(acc)
+                new_lr = [ group['lr'] for group in opt.param_groups ][0]
+                if new_lr != lr:
+                    log("Learning rate modified to %f" % (new_lr))
+                    lr = new_lr
 
-            if acc > best_valid_acc:
-                sys.stderr.write('Writing model at epoch %d\n' % (epoch))
-                sys.stderr.flush()
-                best_valid_acc = acc
-                torch.save(model, 'best_model.pt')
+                if acc > best_valid_acc:
+                    sys.stderr.write('Writing model at epoch %d\n' % (epoch))
+                    sys.stderr.flush()
+                    best_valid_acc = acc
+                    torch.save(model, 'best_model.pt')
 
-        del unlabeled_X, unlabeled_X_ae
+            del unlabeled_X, unlabeled_X_ae
+    except KeyboardInterrupt:
+        log('Exiting training early due to keyboard interrupt')
+
     print("best validation accuracy during training; %f" % (best_valid_acc))
+    return best_valid_acc
 
 domains = ['books', 'dvd', 'electronics', 'kitchen']
 parser = argparse.ArgumentParser(description='PyTorch joint domain adaptation neural network trainer')
@@ -410,7 +415,7 @@ def main(args):
             ae_input_inds = range(X_unlabeled_ae.shape[1])
 
         
-    train_model(X_source_feats,
+    acc = train_model(X_source_feats,
                 X_source_ae,
                 np.array(train_labels), 
                 X_target_feats,
@@ -425,7 +430,12 @@ def main(args):
                 X_source_valid_ae=X_source_valid_ae,
                 y_source_valid=np.array(test_labels))
 
+    if acc <= 0:
+        log('Cannot evaluate because no good model was saved.')
+        return
+
     best_model = torch.load('best_model.pt')
+    best_model.eval()
 
     device='cuda' if torch.cuda.is_available() else 'cpu'
 
