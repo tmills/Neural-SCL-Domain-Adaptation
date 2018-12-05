@@ -57,7 +57,7 @@ class JointLearnerModel(nn.Module):
         # self.ae_norm = nn.LayerNorm(pivot_hidden_nodes)
         # self.input_norm = nn.LayerNorm(num_features)
 
-        self.dropout = nn.Dropout(p=dropout)
+        # self.dropout = nn.Dropout(p=dropout)
         
     def forward(self, full_input, pivot_input, alpha=1.0):
 
@@ -70,9 +70,12 @@ class JointLearnerModel(nn.Module):
         # pivot_rep = self.ae_norm(pivot_rep)
 
         # Separate dropout
-        full_input = self.dropout(full_input)
+        # full_input = self.dropout(full_input)
 
-        task_input = torch.cat( (full_input, pivot_rep ), dim=1 )
+        if full_input is None:
+            task_input = pivot_rep
+        else:
+            task_input = torch.cat( (full_input, pivot_rep ), dim=1 )
         
         # joint normalization
         # task_input = self.input_norm(task_input)
@@ -151,10 +154,10 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
         else:
             raise Exception("ERROR: There are too few unlabeled instances. Is something wrong?\n")
 
-    model = JointLearnerModel(num_features, len(ae_input_inds), len(ae_output_inds), pivot_hidden_nodes=pivot_hidden_nodes, dropout=dropout).to(device)
+    model = JointLearnerModel(0, len(ae_input_inds), len(ae_output_inds), pivot_hidden_nodes=pivot_hidden_nodes, dropout=dropout).to(device)
     task_lossfn = nn.BCEWithLogitsLoss().to(device)
-    task2_lossfn = nn.BCEWithLogitsLoss().to(device)
-    dom_lossfn = nn.BCEWithLogitsLoss().to(device)
+    # task2_lossfn = nn.BCEWithLogitsLoss().to(device)
+    # dom_lossfn = nn.BCEWithLogitsLoss().to(device)
     recon_lossfn = nn.BCEWithLogitsLoss().to(device)
     l2_lossfn = nn.MSELoss(reduction='sum').to(device)
 
@@ -188,7 +191,7 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
             alpha = 1.0
 
             # Pass it source examples and compute task loss and pivot reconstruction loss:
-            batch_source_X = torch.FloatTensor(source_X[source_batch_ind:source_batch_ind+source_batch_size, :].toarray()).to(device)
+            batch_source_X = None #torch.FloatTensor(source_X[source_batch_ind:source_batch_ind+source_batch_size, :].toarray()).to(device)
 
             ae_inputs = torch.FloatTensor(source_X_ae[source_batch_ind:source_batch_ind+source_batch_size,ae_input_inds].toarray()).to(device)
 
@@ -197,11 +200,11 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
             # Get task loss:
             batch_source_y = torch.FloatTensor(source_y[source_batch_ind:source_batch_ind+source_batch_size]).to(device).unsqueeze(1)
             task_loss = task_lossfn(task_pred, batch_source_y)
-            task2_loss = task2_lossfn(task2_pred, batch_source_y)
+            # task2_loss = task2_lossfn(task2_pred, batch_source_y)
 
             # Get domain loss:
             batch_source_dom_y = torch.zeros_like(batch_source_y) + 1
-            dom_loss = dom_lossfn(dom_pred, batch_source_dom_y)
+            # dom_loss = dom_lossfn(dom_pred, batch_source_dom_y)
 
             # Get reconstruction loss:
             ae_outputs = torch.FloatTensor(source_X_ae[source_batch_ind:source_batch_ind+source_batch_size,ae_output_inds].toarray()).to(device)
@@ -216,7 +219,7 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
 
 
             # pass it target examples and compute reconstruction loss:
-            batch_target_X = torch.FloatTensor(target_X[target_batch_ind:target_batch_ind+target_batch_size, :].toarray()).to(device)
+            batch_target_X = None #torch.FloatTensor(target_X[target_batch_ind:target_batch_ind+target_batch_size, :].toarray()).to(device)
             ae_inputs = torch.FloatTensor(target_X_ae[target_batch_ind:target_batch_ind+target_batch_size,ae_input_inds].toarray()).to(device)
 
             target_task_pred,pivot_pred,_,_,dom_pred = model(batch_target_X, ae_inputs, alpha=alpha)
@@ -225,7 +228,7 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
 
             # domain loss:
             batch_target_dom_y = torch.zeros_like(dom_pred)
-            dom_loss += dom_lossfn(dom_pred, batch_target_dom_y)
+            # dom_loss += dom_lossfn(dom_pred, batch_target_dom_y)
 
             # Reconstruction loss:
             ae_outputs = torch.FloatTensor(target_X_ae[target_batch_ind:target_batch_ind+target_batch_size,ae_output_inds].toarray()).to(device)
@@ -243,24 +246,24 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
                 #if sub_batch_size < max_batch_size:
                     #print('Batch %d has size %d' % (sub_batch, sub_batch_size))
 
-                sub_batch_unlabeled_X = torch.FloatTensor(unlabeled_X[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size, :].toarray()).to(device)
+                sub_batch_unlabeled_X = None #torch.FloatTensor(unlabeled_X[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size, :].toarray()).to(device)
                 ae_inputs = torch.FloatTensor(unlabeled_X_ae[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size,ae_input_inds].toarray()).to(device)
                 ae_outputs = torch.FloatTensor(unlabeled_X_ae[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size, ae_output_inds].toarray()).to(device)
                 _, pivot_pred,_,_,dom_pred = model(sub_batch_unlabeled_X, ae_inputs, alpha=alpha)
                 sub_batch_dom_y = torch.FloatTensor( batch_unlabeled_dom_y[un_batch_ind+sub_batch_start_ind:un_batch_ind+sub_batch_start_ind+sub_batch_size]).to(device)
-                dom_loss += dom_lossfn(dom_pred, sub_batch_dom_y)
+                # dom_loss += dom_lossfn(dom_pred, sub_batch_dom_y)
                 unlabeled_recon_loss += recon_lossfn(pivot_pred, ae_outputs)
                 sub_batch_start_ind += max_batch_size
 
             l2_loss = l2_lossfn( model.task_classifier.weight, torch.zeros_like(model.task_classifier.weight))
             # Compute the total loss and step the optimizer in the right direction:
             if batch == 0:
-                log('Epoch %d: task=%f l2=%f task2=%f dom=%f src_recon=%f, tgt_recon=%f, un_recon=%f' % 
-                    (epoch, task_loss, l2_loss, task2_loss, dom_loss, source_recon_loss, target_recon_loss, unlabeled_recon_loss))
+                log('Epoch %d: task=%f l2=%f src_recon=%f, tgt_recon=%f, un_recon=%f' % 
+                    (epoch, task_loss, l2_loss, source_recon_loss, target_recon_loss, unlabeled_recon_loss))
             total_loss = (task_loss + 
                          l2_weight * l2_loss +
-                         t2_weight * task2_loss +
-                         dom_weight * dom_loss +
+                        #  t2_weight * task2_loss +
+                        #  dom_weight * dom_loss +
                          recon_weight * (source_recon_loss + target_recon_loss + unlabeled_recon_loss))
             epoch_loss += total_loss.item()
             total_loss.backward()
@@ -279,7 +282,7 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
 
         model.eval()
         if not X_source_valid_feats is None:
-            test_X = torch.FloatTensor(X_source_valid_feats.toarray()).to(device)
+            test_X = None #torch.FloatTensor(X_source_valid_feats.toarray()).to(device)
             test_np_input = torch.FloatTensor(X_source_valid_ae[:, ae_input_inds].toarray()).to(device)
             # test_y = torch.FloatTensor(y_test_source).to(device)
             test_preds = np.round(sigmoid(model(test_X, test_np_input)[0]).data.cpu().numpy())[:,0]
@@ -300,12 +303,13 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
                 torch.save(model, 'best_model.pt')
 
         del unlabeled_X, unlabeled_X_ae
+    print("best validation accuracy during training; %f" % (best_valid_acc))
 
 domains = ['books', 'dvd', 'electronics', 'kitchen']
 parser = argparse.ArgumentParser(description='PyTorch joint domain adaptation neural network trainer')
 parser.add_argument('-s', '--source', required=True, choices=domains)
 parser.add_argument('-t', '--target', required=True, choices=domains)
-parser.add_argument('-m', '--method', default='freq', choices=['freq', 'mi', 'ae'])
+parser.add_argument('-m', '--method', default='freq', choices=['freq', 'mi', 'ae', 'mi-ae', 'freq-ae'])
 parser.add_argument('-e', '--eval', default='pt', choices=['pt', 'lr'])
 
 def main(args):
@@ -371,16 +375,20 @@ def main(args):
     X_source_valid_ae = encoder_ae.transform(test)
 
 
-    if args.method == 'freq':
+    if args.method.startswith('freq'):
         source_cands = np.where(X_source_ae.sum(0) > pivot_min_count)[1]
         target_cands = np.where(X_target_ae.sum(0) > pivot_min_count)[1]
         # pivot candidates are those that meet frequency cutoff in both domains train data:
         ae_output_inds = np.intersect1d(source_cands, target_cands)
-        # non-pivot candidates are the set difference - those that didn't meet the frequency cutoff in both domains:
-        ae_input_inds = np.setdiff1d(range(X_unlabeled_ae.shape[1]), ae_output_inds)
+
+        if args.method == 'freq':
+            # non-pivot candidates are the set difference - those that didn't meet the frequency cutoff in both domains:
+            ae_input_inds = np.setdiff1d(range(X_unlabeled_ae.shape[1]), ae_output_inds)
+        elif args.method == 'freq-ae':
+            ae_input_inds = range(X_unlabeled_ae.shape[1])
     elif args.method == 'ae':
         ae_input_inds = ae_output_inds = range(X_unlabeled_ae.shape[1])
-    elif args.method == 'mi':
+    elif args.method.startswith('mi'):
         # Run the sklearn mi feature selection:
         MIs, MI = GetTopNMI(2000, X_source_ae.toarray(), train_labels)
         MIs.reverse()
@@ -395,9 +403,12 @@ def main(args):
                 print("feature %d is '%s' with mi %f" % (c, encoder_ae.get_feature_names()[MIs[i]], MI[MIs[i]]))
             i += 1
 
-
         ae_output_inds.sort()
-        ae_input_inds = np.setdiff1d(range(X_unlabeled_ae.shape[1]), ae_output_inds)
+        if args.method == 'mi':
+            ae_input_inds = np.setdiff1d(range(X_unlabeled_ae.shape[1]), ae_output_inds)
+        elif args.method == 'mi-ae':
+            ae_input_inds = range(X_unlabeled_ae.shape[1])
+
         
     train_model(X_source_feats,
                 X_source_ae,
@@ -418,7 +429,7 @@ def main(args):
 
     device='cuda' if torch.cuda.is_available() else 'cpu'
 
-    target_X_feats = torch.FloatTensor(X_target_feats.toarray()).to(device)
+    target_X_feats = None #torch.FloatTensor(X_target_feats.toarray()).to(device)
     target_X_ae = torch.FloatTensor(X_target_ae[:,ae_input_inds].toarray()).to(device)
     target_y = np.array(dest_test_labels)
     if args.eval == 'pt':
