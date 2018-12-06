@@ -100,6 +100,7 @@ def main(args):
     # so take the column-wise max, to fnid the closest source instance to every column instance
     # Then take the min of that vector, to find the target instance that is furthest from a source instance
     most_sim = sim_matrix.max(0)
+    print('Highest similarity is %f and lowest is %f, mean is %f' % (most_sim.max(), most_sim.min(), most_sim.mean()))
 
     sim_inds = np.argsort(most_sim)
     gold_labels = torch.FloatTensor(dest_test_labels).to(device) * 2 - 1
@@ -109,7 +110,7 @@ def main(args):
     egs = 100
     for ind in margin_inds:
         if err[ind] < 0:
-            print('######## Error %d (ind %d) was %f from the margin with gold label %d ' % (100-egs, ind, err[ind], dest_test_labels[ind]))
+            print('######## Error %d (ind %d) was %f from the margin with gold label %d, with similarity %f ' % (100-egs, ind, err[ind], dest_test_labels[ind], most_sim[ind]))
             print(dest_test[ind])
             print('########################################################')
             egs -=1
