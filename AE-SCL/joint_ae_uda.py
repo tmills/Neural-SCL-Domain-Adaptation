@@ -310,6 +310,43 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
     print("best validation accuracy during training; %f" % (best_valid_acc))
     return best_valid_acc
 
+def get_ae_inds(method, X_source_ae, X_target_ae, X_unlabeled_ae, train_labels, num_pivots, X_allsource_ae, pivot_min_count=10):
+    if method.startswith('freq'):
+        source_cands = np.where(X_source_ae.sum(0) > pivot_min_count)[1]
+        target_cands = np.where(X_target_ae.sum(0) > pivot_min_count)[1]
+        # pivot candidates are those that meet frequency cutoff in both domains train data:
+        ae_output_inds = np.intersect1d(source_cands, target_cands)
+
+        if method == 'freq':
+            # non-pivot candidates are the set difference - those that didn't meet the frequency cutoff in both domains:
+            ae_input_inds = np.setdiff1d(range(X_unlabeled_ae.shape[1]), ae_output_inds)
+        elif method == 'freq-ae':
+            ae_input_inds = range(X_unlabeled_ae.shape[1])
+    elif method == 'ae':
+        ae_input_inds = ae_output_inds = range(X_unlabeled_ae.shape[1])
+    elif method.startswith('mi'):
+        # Run the sklearn mi feature selection:
+        MIs, MI = GetTopNMI(2000, X_source_ae.toarray(), train_labels)
+        MIs.reverse()
+        ae_output_inds = []
+        i=c=0
+        while c < num_pivots:
+            s_count = X_allsource_ae[:,i].sum()
+            t_count = X_target_ae[:,i].sum()
+            if s_count >= pivot_min_count and t_count >= pivot_min_count:
+                ae_output_inds.append(MIs[i])
+                c += 1
+                print("feature %d is '%s' with mi %f" % (c, encoder_ae.get_feature_names()[MIs[i]], MI[MIs[i]]))
+            i += 1
+
+        ae_output_inds.sort()
+        if method == 'mi':
+            ae_input_inds = np.setdiff1d(range(X_unlabeled_ae.shape[1]), ae_output_inds)
+        elif method == 'mi-ae':
+            ae_input_inds = range(X_unlabeled_ae.shape[1])
+    return ae_input_inds, ae_output_inds
+
+
 domains = ['books', 'dvd', 'electronics', 'kitchen']
 parser = argparse.ArgumentParser(description='PyTorch joint domain adaptation neural network trainer')
 parser.add_argument('-s', '--source', required=True, choices=domains)
@@ -379,42 +416,8 @@ def main(args):
     X_target_ae = encoder_ae.transform(dest_test)
     X_source_valid_ae = encoder_ae.transform(test)
 
+    ae_input_inds, ae_output_inds = get_ae_inds(args.method, X_source_ae, X_target_ae, X_unlabeled_ae, train_labels, num_pivots, X_allsource_ae, pivot_min_count)
 
-    if args.method.startswith('freq'):
-        source_cands = np.where(X_source_ae.sum(0) > pivot_min_count)[1]
-        target_cands = np.where(X_target_ae.sum(0) > pivot_min_count)[1]
-        # pivot candidates are those that meet frequency cutoff in both domains train data:
-        ae_output_inds = np.intersect1d(source_cands, target_cands)
-
-        if args.method == 'freq':
-            # non-pivot candidates are the set difference - those that didn't meet the frequency cutoff in both domains:
-            ae_input_inds = np.setdiff1d(range(X_unlabeled_ae.shape[1]), ae_output_inds)
-        elif args.method == 'freq-ae':
-            ae_input_inds = range(X_unlabeled_ae.shape[1])
-    elif args.method == 'ae':
-        ae_input_inds = ae_output_inds = range(X_unlabeled_ae.shape[1])
-    elif args.method.startswith('mi'):
-        # Run the sklearn mi feature selection:
-        MIs, MI = GetTopNMI(2000, X_source_ae.toarray(), train_labels)
-        MIs.reverse()
-        ae_output_inds = []
-        i=c=0
-        while c < num_pivots:
-            s_count = X_allsource_ae[:,i].sum()
-            t_count = X_target_ae[:,i].sum()
-            if s_count >= pivot_min_count and t_count >= pivot_min_count:
-                ae_output_inds.append(MIs[i])
-                c += 1
-                print("feature %d is '%s' with mi %f" % (c, encoder_ae.get_feature_names()[MIs[i]], MI[MIs[i]]))
-            i += 1
-
-        ae_output_inds.sort()
-        if args.method == 'mi':
-            ae_input_inds = np.setdiff1d(range(X_unlabeled_ae.shape[1]), ae_output_inds)
-        elif args.method == 'mi-ae':
-            ae_input_inds = range(X_unlabeled_ae.shape[1])
-
-        
     acc = train_model(X_source_feats,
                 X_source_ae,
                 np.array(train_labels), 
