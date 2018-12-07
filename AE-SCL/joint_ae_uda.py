@@ -164,6 +164,7 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
     opt = optim.Adam(model.parameters(), weight_decay=weight_decay, lr=lr)
     sched = optim.lr_scheduler.ReduceLROnPlateau(opt, 'max', patience=5, factor=0.33)
     best_valid_acc = 0
+    best_valid_loss = -1
 
     try:
         for epoch in range(epochs):
@@ -286,34 +287,39 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
                 test_X = None #torch.FloatTensor(X_source_valid_feats.toarray()).to(device)
                 test_np_input = torch.FloatTensor(X_source_valid_ae[:, ae_input_inds].toarray()).to(device)
                 # test_y = torch.FloatTensor(y_test_source).to(device)
-                test_preds = np.round(sigmoid(model(test_X, test_np_input)[0]).data.cpu().numpy())[:,0]
+                raw_preds = model(test_X, test_np_input)[0]
+                valid_source_y = torch.FloatTensor(y_source_valid).to(device).unsqueeze(1)
+                valid_task_loss = task_lossfn(raw_preds, valid_source_y)
+                test_preds = np.round(sigmoid(raw_preds).data.cpu().numpy())[:,0]
                 correct_preds = (y_source_valid == test_preds).sum()
                 acc = correct_preds / len(y_source_valid)
 
-                log("  Validation accuracy=%f" % (acc))
+                log("  Validation loss=%f, accuracy=%f" % (valid_task_loss, acc))
                 # sched.step(acc)
                 new_lr = [ group['lr'] for group in opt.param_groups ][0]
                 if new_lr != lr:
                     log("Learning rate modified to %f" % (new_lr))
                     lr = new_lr
 
-                if acc > best_valid_acc:
+                # if acc > best_valid_acc:
+                if valid_task_loss < best_valid_loss or best_valid_loss < 0:
                     sys.stderr.write('Writing model at epoch %d\n' % (epoch))
                     sys.stderr.flush()
-                    best_valid_acc = acc
+                    # best_valid_acc = acc
+                    best_valid_loss = valid_task_loss
                     torch.save(model, 'best_model.pt')
 
             del unlabeled_X, unlabeled_X_ae
     except KeyboardInterrupt:
         log('Exiting training early due to keyboard interrupt')
 
-    print("best validation accuracy during training; %f" % (best_valid_acc))
-    return best_valid_acc
+    print("best validation loss during training; %f accuracy: %f" % (best_valid_loss, best_valid_acc))
+    return best_valid_loss
 
-def get_ae_inds(method, X_source_ae, X_target_ae, X_unlabeled_ae, train_labels, num_pivots, X_allsource_ae, pivot_min_count=10):
+def get_ae_inds(method, X_source_ae, X_target_ae, X_unlabeled_ae, train_labels, num_pivots, X_allsource_ae, feat_names, pivot_min_count=10, target_labels=None):
     if method.startswith('freq'):
-        source_cands = np.where(X_source_ae.sum(0) > pivot_min_count)[1]
-        target_cands = np.where(X_target_ae.sum(0) > pivot_min_count)[1]
+        source_cands = np.where(X_source_ae.sum(0) > pivot_min_count*2)[1]
+        target_cands = np.where(X_target_ae.sum(0) > pivot_min_count*2)[1]
         # pivot candidates are those that meet frequency cutoff in both domains train data:
         ae_output_inds = np.intersect1d(source_cands, target_cands)
 
@@ -326,7 +332,12 @@ def get_ae_inds(method, X_source_ae, X_target_ae, X_unlabeled_ae, train_labels, 
         ae_input_inds = ae_output_inds = range(X_unlabeled_ae.shape[1])
     elif method.startswith('mi'):
         # Run the sklearn mi feature selection:
-        MIs, MI = GetTopNMI(2000, X_source_ae.toarray(), train_labels)
+        if method == 'mi-oracle':
+            assert target_labels is not None, 'To use the mi-oracle method, one must pass in target labels'
+            MIs, MI = GetTopNMI(2000, X_target_ae.toarray(), target_labels)
+        else:
+            MIs, MI = GetTopNMI(2000, X_source_ae.toarray(), train_labels)
+
         MIs.reverse()
         ae_output_inds = []
         i=c=0
@@ -336,11 +347,11 @@ def get_ae_inds(method, X_source_ae, X_target_ae, X_unlabeled_ae, train_labels, 
             if s_count >= pivot_min_count and t_count >= pivot_min_count:
                 ae_output_inds.append(MIs[i])
                 c += 1
-                print("feature %d is '%s' with mi %f" % (c, encoder_ae.get_feature_names()[MIs[i]], MI[MIs[i]]))
+                print("feature %d is '%s' with mi %f" % (c, feat_names[MIs[i]], MI[MIs[i]]))
             i += 1
 
         ae_output_inds.sort()
-        if method == 'mi':
+        if method == 'mi' or method == 'mi-oracle':
             ae_input_inds = np.setdiff1d(range(X_unlabeled_ae.shape[1]), ae_output_inds)
         elif method == 'mi-ae':
             ae_input_inds = range(X_unlabeled_ae.shape[1])
@@ -351,7 +362,7 @@ domains = ['books', 'dvd', 'electronics', 'kitchen']
 parser = argparse.ArgumentParser(description='PyTorch joint domain adaptation neural network trainer')
 parser.add_argument('-s', '--source', required=True, choices=domains)
 parser.add_argument('-t', '--target', required=True, choices=domains)
-parser.add_argument('-m', '--method', default='freq', choices=['freq', 'mi', 'ae', 'mi-ae', 'freq-ae'])
+parser.add_argument('-m', '--method', default='freq', choices=['freq', 'mi', 'ae', 'mi-ae', 'freq-ae', 'mi-oracle'])
 parser.add_argument('-e', '--eval', default='pt', choices=['pt', 'lr'])
 
 def main(args):
@@ -416,7 +427,7 @@ def main(args):
     X_target_ae = encoder_ae.transform(dest_test)
     X_source_valid_ae = encoder_ae.transform(test)
 
-    ae_input_inds, ae_output_inds = get_ae_inds(args.method, X_source_ae, X_target_ae, X_unlabeled_ae, train_labels, num_pivots, X_allsource_ae, pivot_min_count)
+    ae_input_inds, ae_output_inds = get_ae_inds(args.method, X_source_ae, X_target_ae, X_unlabeled_ae, train_labels, num_pivots, X_allsource_ae, encoder_ae.get_feature_names(), pivot_min_count, target_labels=dest_test_labels)
 
     acc = train_model(X_source_feats,
                 X_source_ae,
