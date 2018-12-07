@@ -316,7 +316,7 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
     print("best validation loss during training; %f accuracy: %f" % (best_valid_loss, best_valid_acc))
     return best_valid_loss
 
-def get_ae_inds(method, X_source_ae, X_target_ae, X_unlabeled_ae, train_labels, num_pivots, X_allsource_ae, feat_names, pivot_min_count=10, target_labels=None):
+def get_ae_inds(method, X_source_ae, X_target_ae, X_unlabeled_ae, train_labels, num_pivots, X_allsource_ae, X_alltarget_ae, feat_names, pivot_min_count=20, target_labels=None):
     if method.startswith('freq'):
         source_cands = np.where(X_source_ae.sum(0) > pivot_min_count*2)[1]
         target_cands = np.where(X_target_ae.sum(0) > pivot_min_count*2)[1]
@@ -342,12 +342,12 @@ def get_ae_inds(method, X_source_ae, X_target_ae, X_unlabeled_ae, train_labels, 
         ae_output_inds = []
         i=c=0
         while c < num_pivots:
-            s_count = X_allsource_ae[:,i].sum()
-            t_count = X_target_ae[:,i].sum()
+            s_count = X_source_ae[:,MIs[i]].sum()
+            t_count = X_alltarget_ae[:,MIs[i]].sum()
             if s_count >= pivot_min_count and t_count >= pivot_min_count:
                 ae_output_inds.append(MIs[i])
                 c += 1
-                print("feature %d is '%s' with mi %f" % (c, feat_names[MIs[i]], MI[MIs[i]]))
+                print("feature %d is '%s' with mi %f src count=%d, tgt count=%d" % (c, feat_names[MIs[i]], MI[MIs[i]], s_count, t_count))
             i += 1
 
         ae_output_inds.sort()
@@ -419,7 +419,7 @@ def main(args):
 
     encoder_ae = CountVectorizer(ngram_range=(1, 2), token_pattern=r'\b\w+\b', min_df=un_count, binary=True)
     X_unlabeled_ae = encoder_ae.fit_transform(unlabeled)
-    # X_tgtun_ae = encoder_ae.transform(target_un)
+    X_tgtun_ae = encoder_ae.transform(target_un)
 
     # X_unlabeledonly_ae = encoder_ae.transform(unlabeled_only)
     X_source_ae = encoder_ae.transform(train)
@@ -427,7 +427,7 @@ def main(args):
     X_target_ae = encoder_ae.transform(dest_test)
     X_source_valid_ae = encoder_ae.transform(test)
 
-    ae_input_inds, ae_output_inds = get_ae_inds(args.method, X_source_ae, X_target_ae, X_unlabeled_ae, train_labels, num_pivots, X_allsource_ae, encoder_ae.get_feature_names(), pivot_min_count, target_labels=dest_test_labels)
+    ae_input_inds, ae_output_inds = get_ae_inds(args.method, X_source_ae, X_target_ae, X_unlabeled_ae, train_labels, num_pivots, X_allsource_ae, X_tgtun_ae, encoder_ae.get_feature_names(), pivot_min_count, target_labels=dest_test_labels)
 
     acc = train_model(X_source_feats,
                 X_source_ae,
