@@ -118,17 +118,17 @@ def train_model(X_source_feats, X_source_ae, y_source, X_target_feats, X_target_
 
     device='cuda' if torch.cuda.is_available() else 'cpu'
  
-    epochs = 30
+    epochs = 20
     recon_weight = 100.0
-    l2_weight = 0.0 #1
+    l2_weight = 0.1 #1
     t2_weight = 0.000
     dom_weight = 0.00000
     # oracle_weight = 1.0
     max_batch_size = 50
-    pivot_hidden_nodes = 500
+    pivot_hidden_nodes = 2000
     weight_decay = 0.0000 #1
     lr = 0.001  # adam default is 0.001
-    dropout=0.2
+    dropout=0.0
  
     log('Proceeding in standard semi-supervised pivot-learning mode')
     
